@@ -1,0 +1,1559 @@
+---
+title: "Beamng analysis"
+author: "Gianluca Fabris"
+output: pdf_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(dplyr)
+library(moments)
+library(reticulate)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+
+raw = read.csv("data/importosm_raw.csv", header = TRUE, sep = ",")
+raw2 = read.csv("data/importosm_raw2.csv", header = TRUE, sep = ",")
+custom = read.csv("data/importosm_custom.csv", header = TRUE, sep = ",")
+custom2 = read.csv("data/importosm_custom2.csv", header = TRUE, sep = ",")
+custom_elevation = read.csv("data/importosm_custom_elevation.csv", header = TRUE, sep = ",")
+custom_elevation2 = read.csv("data/importosm_custom_elevation2.csv", header = TRUE, sep = ",")
+
+# rename columns, merge data and align data
+names(raw) = c("time", "position_x", "position_y", "position_z", "speed - km/h", "rpm", "position_r", "position_p", "position_h", "temp_water", "speed2", "stering_wheel_rotation", "throttle", "brake", "cluch", "speed_air", "speed_airflow", "altitude", "reverse", "throttle2", "null")
+names(raw2) = c("time", "throttle", "steering", "cluch", "parkingbrake", "brake", "null")
+names(custom) = c("time", "position_x", "position_y", "position_z", "speed - km/h", "rpm", "position_r", "position_p", "position_h", "temp_water", "speed2", "stering_wheel_rotation", "throttle", "brake", "cluch", "speed_air", "speed_airflow", "altitude", "reverse", "throttle2", "null")
+names(custom2) = c("time", "throttle", "steering", "cluch", "parkingbrake", "brake", "null")
+names(custom_elevation) = c("time", "position_x", "position_y", "position_z", "speed - km/h", "rpm", "position_r", "position_p", "position_h", "temp_water", "speed2", "stering_wheel_rotation", "throttle", "brake", "cluch", "speed_air", "speed_airflow", "altitude", "reverse", "throttle2", "null")
+names(custom_elevation2) = c("time", "throttle", "steering", "cluch", "parkingbrake", "brake", "null")
+
+raw = raw[, !(names(raw) %in% c("speed - km/h", "rpm", "temp_water", "speed2", "stering_wheel_rotation", "throttle", "brake", "cluch", "speed_air", "speed_airflow", "altitude", "reverse", "throttle2", "null"))]
+raw2 = raw2[, !(names(raw2) %in% c("throttle", "cluch", "parkingbrake", "brake", "null"))]
+custom = custom[, !(names(custom) %in% c("speed - km/h", "rpm", "temp_water", "speed2", "stering_wheel_rotation", "throttle", "brake", "cluch", "speed_air", "speed_airflow", "altitude", "reverse", "throttle2", "null"))]
+custom2 = custom2[, !(names(custom2) %in% c("throttle", "cluch", "parkingbrake", "brake", "null"))]
+custom_elevation = custom_elevation[, !(names(custom_elevation) %in% c("speed - km/h", "rpm", "temp_water", "speed2", "stering_wheel_rotation", "throttle", "brake", "cluch", "speed_air", "speed_airflow", "altitude", "reverse", "throttle2", "null"))]
+custom_elevation2 = custom_elevation2[, !(names(custom_elevation2) %in% c("throttle", "cluch", "parkingbrake", "brake", "null"))]
+
+raw = merge(raw, raw2, by = "time", all = FALSE)
+rm(raw2)
+custom = merge(custom, custom2, by = "time", all = FALSE)
+rm(custom2)
+custom_elevation = merge(custom_elevation, custom_elevation2, by = "time", all = FALSE)
+rm(custom_elevation2)
+
+# adding missing data and data normalization
+raw = raw %>% mutate(
+  dist_planar = cumsum(c(0, sapply(2:nrow(raw), function(i){
+    sqrt((position_x[i] - position_x[i-1])^2 + (position_y[i] - position_y[i-1])^2)
+  }))),
+  dist_spatial = cumsum(c(0, sapply(2:nrow(raw), function(i){
+    sqrt((position_x[i] - position_x[i-1])^2 + (position_y[i] - position_y[i-1])^2 + (position_z[i] - position_z[i-1])^2)
+  })))
+)
+custom = custom %>% mutate(
+  dist_planar = cumsum(c(0, sapply(2:nrow(custom), function(i){
+    sqrt((position_x[i] - position_x[i-1])^2 + (position_y[i] - position_y[i-1])^2)
+  }))),
+  dist_spatial = cumsum(c(0, sapply(2:nrow(custom), function(i){
+    sqrt((position_x[i] - position_x[i-1])^2 + (position_y[i] - position_y[i-1])^2 + (position_z[i] - position_z[i-1])^2)
+  })))
+)
+custom_elevation = custom_elevation %>% mutate(
+  dist_planar = cumsum(c(0, sapply(2:nrow(custom_elevation), function(i){
+    sqrt((position_x[i] - position_x[i-1])^2 + (position_y[i] - position_y[i-1])^2)
+  }))),
+  dist_spatial = cumsum(c(0, sapply(2:nrow(custom_elevation), function(i){
+    sqrt((position_x[i] - position_x[i-1])^2 + (position_y[i] - position_y[i-1])^2 + (position_z[i] - position_z[i-1])^2)
+  })))
+)
+
+raw$dist_planar = raw$dist_planar - min(unlist(raw$dist_planar))
+raw$dist_spatial = raw$dist_spatial - min(unlist(raw$dist_spatial))
+custom$dist_planar = custom$dist_planar - min(unlist(custom$dist_planar))
+custom$dist_spatial = custom$dist_spatial - min(unlist(custom$dist_spatial))
+custom_elevation$dist_planar = custom_elevation$dist_planar - min(unlist(custom_elevation$dist_planar))
+custom_elevation$dist_spatial = custom_elevation$dist_spatial - min(unlist(custom_elevation$dist_spatial))
+
+raw = raw %>% mutate(
+  speed_x = c(NA, diff(position_x) / diff(time)),
+  speed_y = c(NA, diff(position_y) / diff(time)),
+  speed_z = c(NA, diff(position_z) / diff(time)),
+  speed_planar = sqrt((speed_x)^2 + (speed_y)^2),
+  speed_spatial = sqrt((speed_x)^2 + (speed_y)^2 + (speed_z)^2),
+  speed_r = c(NA, diff(position_r) / diff(time)),
+  speed_p = c(NA, diff(position_p) / diff(time)),
+  speed_h = c(NA, diff(position_h) / diff(time))
+)
+custom = custom %>% mutate(
+  speed_x = c(NA, diff(position_x) / diff(time)),
+  speed_y = c(NA, diff(position_y) / diff(time)),
+  speed_z = c(NA, diff(position_z) / diff(time)),
+  speed_planar = sqrt((speed_x)^2 + (speed_y)^2),
+  speed_spatial = sqrt((speed_x)^2 + (speed_y)^2 + (speed_z)^2),
+  speed_r = c(NA, diff(position_r) / diff(time)),
+  speed_p = c(NA, diff(position_p) / diff(time)),
+  speed_h = c(NA, diff(position_h) / diff(time))
+)
+custom_elevation = custom_elevation %>% mutate(
+  speed_x = c(NA, diff(position_x) / diff(time)),
+  speed_y = c(NA, diff(position_y) / diff(time)),
+  speed_z = c(NA, diff(position_z) / diff(time)),
+  speed_planar = sqrt((speed_x)^2 + (speed_y)^2),
+  speed_spatial = sqrt((speed_x)^2 + (speed_y)^2 + (speed_z)^2),
+  speed_r = c(NA, diff(position_r) / diff(time)),
+  speed_p = c(NA, diff(position_p) / diff(time)),
+  speed_h = c(NA, diff(position_h) / diff(time))
+)
+
+raw = raw %>% mutate(
+  acceleration_x = c(NA, diff(speed_x) / diff(time)),
+  acceleration_y = c(NA, diff(speed_y) / diff(time)),
+  acceleration_z = c(NA, diff(speed_z) / diff(time)),
+  acceleration_planar = sqrt((acceleration_x)^2 + (acceleration_y)^2),
+  acceleration_spatial = sqrt((acceleration_x)^2 + (acceleration_y)^2 + (acceleration_z)^2),
+  acceleration_r = c(NA, diff(speed_r) / diff(time)),
+  acceleration_p = c(NA, diff(speed_p) / diff(time)),
+  acceleration_h = c(NA, diff(speed_h) / diff(time))
+)
+custom = custom %>% mutate(
+  acceleration_x = c(NA, diff(speed_x) / diff(time)),
+  acceleration_y = c(NA, diff(speed_y) / diff(time)),
+  acceleration_z = c(NA, diff(speed_z) / diff(time)),
+  acceleration_planar = sqrt((acceleration_x)^2 + (acceleration_y)^2),
+  acceleration_spatial = sqrt((acceleration_x)^2 + (acceleration_y)^2 + (acceleration_z)^2),
+  acceleration_r = c(NA, diff(speed_r) / diff(time)),
+  acceleration_p = c(NA, diff(speed_p) / diff(time)),
+  acceleration_h = c(NA, diff(speed_h) / diff(time))
+)
+custom_elevation = custom_elevation %>% mutate(
+  acceleration_x = c(NA, diff(speed_x) / diff(time)),
+  acceleration_y = c(NA, diff(speed_y) / diff(time)),
+  acceleration_z = c(NA, diff(speed_z) / diff(time)),
+  acceleration_planar = sqrt((acceleration_x)^2 + (acceleration_y)^2),
+  acceleration_spatial = sqrt((acceleration_x)^2 + (acceleration_y)^2 + (acceleration_z)^2),
+  acceleration_r = c(NA, diff(speed_r) / diff(time)),
+  acceleration_p = c(NA, diff(speed_p) / diff(time)),
+  acceleration_h = c(NA, diff(speed_h) / diff(time))
+)
+
+raw = raw %>% mutate(
+  elevation_cum = c(NA, cumsum(abs(diff(position_z))))
+)
+custom = custom %>% mutate(
+  elevation_cum = c(NA, cumsum(abs(diff(position_z))))
+)
+custom_elevation = custom_elevation %>% mutate(
+  elevation_cum = c(NA, cumsum(abs(diff(position_z))))
+)
+
+raw = raw %>% filter(time >= 1)
+raw = raw %>% filter(time < 50 | (time >= 50 & speed_planar > 0.5))
+custom = custom %>% filter(time >= 1)
+custom = custom %>% filter(time < 50 | (time >= 50 & speed_planar > 0.5))
+custom_elevation = custom_elevation %>% filter(time >= 1)
+custom_elevation = custom_elevation %>% filter(time < 50 | (time >= 50 & speed_planar > 0.5))
+
+# position rad -> deg
+raw = raw %>% mutate(
+  position_h_norm = (position_h * 180 / pi - 90) %% 360 - 180,
+  position_p_norm = (position_p * 180 / pi - 90) %% 360 - 180,
+  position_r_norm = (position_r * 180 / pi - 90) %% 360 - 180
+)
+custom = custom %>% mutate(
+  position_h_norm = (position_h * 180 / pi - 90) %% 360 - 180,
+  position_p_norm = (position_p * 180 / pi - 90) %% 360 - 180,
+  position_r_norm = (position_r * 180 / pi - 90) %% 360 - 180
+)
+custom_elevation = custom_elevation %>% mutate(
+  position_h_norm = (position_h * 180 / pi - 90) %% 360 - 180,
+  position_p_norm = (position_p * 180 / pi - 90) %% 360 - 180,
+  position_r_norm = (position_r * 180 / pi - 90) %% 360 - 180
+)
+
+# speed m/s -> km/h
+raw = raw %>% mutate(
+  speed_x_norm = speed_x * 3.6,
+  speed_y_norm = speed_y * 3.6,
+  speed_z_norm = speed_z * 3.6,
+  speed_planar_norm = speed_planar * 3.6,
+  speed_spatial_norm = speed_spatial * 3.6
+)
+custom = custom %>% mutate(
+  speed_x_norm = speed_x * 3.6,
+  speed_y_norm = speed_y * 3.6,
+  speed_z_norm = speed_z * 3.6,
+  speed_planar_norm = speed_planar * 3.6,
+  speed_spatial_norm = speed_spatial * 3.6
+)
+custom_elevation = custom_elevation %>% mutate(
+  speed_x_norm = speed_x * 3.6,
+  speed_y_norm = speed_y * 3.6,
+  speed_z_norm = speed_z * 3.6,
+  speed_planar_norm = speed_planar * 3.6,
+  speed_spatial_norm = speed_spatial * 3.6
+)
+
+# acceleration m/s^2 -> G
+raw = raw %>% mutate(
+  acceleration_x = acceleration_x / 100,
+  acceleration_y = acceleration_y / 100,
+  acceleration_z = acceleration_z / 100,
+  acceleration_planar = acceleration_planar / 100,
+  acceleration_spatial = acceleration_spatial / 100
+)
+custom = custom %>% mutate(
+  acceleration_x = acceleration_x / 100,
+  acceleration_y = acceleration_y / 100,
+  acceleration_z = acceleration_z / 100,
+  acceleration_planar = acceleration_planar / 100,
+  acceleration_spatial = acceleration_spatial / 100
+)
+custom_elevation = custom_elevation %>% mutate(
+  acceleration_x = acceleration_x / 100,
+  acceleration_y = acceleration_y / 100,
+  acceleration_z = acceleration_z / 100,
+  acceleration_planar = acceleration_planar / 100,
+  acceleration_spatial = acceleration_spatial / 100
+)
+raw = raw %>% mutate(
+  acceleration_x_norm = acceleration_x / 9.81,
+  acceleration_y_norm = acceleration_y / 9.81,
+  acceleration_z_norm = acceleration_z / 9.81,
+  acceleration_planar_norm = acceleration_planar / 9.81,
+  acceleration_spatial_norm = acceleration_spatial / 9.81
+)
+custom = custom %>% mutate(
+  acceleration_x_norm = acceleration_x / 9.81,
+  acceleration_y_norm = acceleration_y / 9.81,
+  acceleration_z_norm = acceleration_z / 9.81,
+  acceleration_planar_norm = acceleration_planar / 9.81,
+  acceleration_spatial_norm = acceleration_spatial / 9.81
+)
+custom_elevation = custom_elevation %>% mutate(
+  acceleration_x_norm = acceleration_x / 9.81,
+  acceleration_y_norm = acceleration_y / 9.81,
+  acceleration_z_norm = acceleration_z / 9.81,
+  acceleration_planar_norm = acceleration_planar / 9.81,
+  acceleration_spatial_norm = acceleration_spatial / 9.81
+)
+
+#adding distance from reference line (approximated) and importing road (for visualization) (exact)
+```
+
+```{python}
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+from beamngpy import Scenario, Road, MeshRoad
+import os
+import json
+
+def visualizeCatmullrom(p):
+    res = 100
+    p_interpolated = catmull_rom(p, res)
+    p = np.array(p)
+    pmin = np.min(p) - 5
+    pmax = np.max(p) + 5
+    plt.figure(figsize=(10, 10))
+    plt.plot(p_interpolated[:, 0], p_interpolated[:, 1])
+    plt.scatter(p[:, 0], p[:, 1], color='black')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.xlim([pmin, pmax])
+    plt.ylim([pmin, pmax])
+    plt.grid(True)
+    plt.show()
+
+def catmull_rom_one_point(P0, P1, P2, P3, res = 100, alpha = 0.0):
+    """
+    Computes interpolated y-coord for given x-coord using Catmull-Rom.
+    Computes an interpolated y-coordinate for the given x-coordinate between
+    the support points P1 and P2. The neighboring support points P0 and P3 are
+    used by Catmull-Rom to ensure a smooth transition between the spline
+    segments.
+    This version works both with in x and y direction.
+    Args:
+        P0: 1st support point
+        P1: 2nd support point
+        P2: 3rd support point
+        P3: 4th support point
+        res: resolution of a segment (including the start point, but not the endpoint of the segment)
+        alpha: 0.0 uniform, 0.5 centripetal, 1.0 chordal
+    Returns:
+        y: value of y (given x) in that derivative
+    """
+    def compute_tk(ti, pi, pj):
+        return ti + (math.sqrt((pj[0] - pi[0])**2 + (pj[1] - pi[1])**2))**alpha
+
+    t0 = 0.0
+    t1 = compute_tk(t0, P0, P1)
+    t2 = compute_tk(t1, P1, P2)
+    t3 = compute_tk(t2, P2, P3)
+
+    t = np.linspace(t1, t2, res, endpoint=False).reshape(res, 1)
+
+    A1 = (t1 - t) / (t1 - t0) * P0 + (t - t0) / (t1 - t0) * P1
+    A2 = (t2 - t) / (t2 - t1) * P1 + (t - t1) / (t2 - t1) * P2
+    A3 = (t3 - t) / (t3 - t2) * P2 + (t - t2) / (t3 - t2) * P3
+    B1 = (t2 - t) / (t2 - t0) * A1 + (t - t0) / (t2 - t0) * A2
+    B2 = (t3 - t) / (t3 - t1) * A2 + (t - t1) / (t3 - t1) * A3
+
+    points = (t2 - t) / (t2 - t1) * B1 + (t - t1) / (t2 - t1) * B2
+    return points
+
+def catmull_rom(points, res=100):
+    """
+    Computes Catmull-Rom Spline for given support points and resolution.
+    Args:
+        p: array of (x,y)-coords
+        res: resolution of a segment (including the start point, but not the endpoint of the segment)
+    Returns:
+        (x,y): array
+    """
+    point_quadruples = []
+    for i in range(len(points)-1):
+        if i == 0:
+            # need to estimate an additional support point before the first
+            point_quadruples.append([(points[0][0] - (points[1][0] - points[0][0]), points[0][1] - (points[1][1] - points[0][1])), (points[0][0], points[0][1]), (points[1][0], points[1][1]), (points[2][0], points[2][1])])
+        elif i == len(points) - 2:
+            # need to estimate an additional support point after the last
+            point_quadruples.append([points[i-1], points[i], points[i+1], (points[i+1][0] + (points[i+1][0] - points[i][0]), points[i+1][1] + (points[i+1][1] - points[i][1]))])
+        else:
+            point_quadruples.append([points[i-1], points[i], points[i+1], points[i+2]])
+    return np.concatenate([catmull_rom_one_point(*pq, res) for pq in point_quadruples])
+
+def visualizeRoad(nodes):
+    fig, ax = plt.subplots()
+    for node in nodes:
+        x = [n[0] for n in node]
+        y = [n[1] for n in node]
+        z = [n[2] for n in node]
+        ax.plot(x, y)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('roads')
+    ax.set_aspect('equal')
+    plt.show()
+    fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+    for node in nodes:
+        x = [n[0] for n in node]
+        y = [n[1] for n in node]
+        z = [n[2] for n in node]
+        ax.scatter(x,y,z)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    ax.set_title('roads')
+    plt.show()
+
+responseRoad = None
+
+def importRoad(scenario:Scenario, f:str=None, rfj:str=None, debug:bool=False):
+    #scenario
+    #   scenario instance
+    #f
+    #   string - folder
+    #rfj
+    #   string - road_file_json
+    #debug
+    #   bool - for debuging visualization of roads
+    global responseRoad
+    global folder
+    global terrain_file_json
+    if f == None:
+        f = folder
+    if rfj == None:
+        rfj = road_file_json
+    print("Loading road data...")
+    #read json
+    with open(os.path.join(f, rfj), "r") as file:
+        responseRoad = json.load(file)
+    #building roads
+    nodes = [tuple([tuple([geometry["lon"],geometry["lat"],geometry["height"]]) for geometry in element["geometry"]]) for element in responseRoad["elements"]]
+    #roads = []
+    #roads_mesh = []
+    #for node in nodes:
+    #    r = Road('track_editor_C_center')
+    #    [r.add_nodes(n) for n in node]
+    #    roads.append(r)
+    #    rm = MeshRoad('track_editor_C_center')
+    #    [rm.add_nodes(n) for n in node]
+    #    roads_mesh.append(rm)
+    #[scenario.add_road(road) for road in roads]
+    #[scenario.add_mesh_road(road_mesh) for road_mesh in roads_mesh]
+    if debug:
+        visualizeRoad(nodes)
+    #return scenario
+
+folder = "data/uniud"
+road_file_json = "road.json"
+
+importRoad(None, folder, road_file_json, False)
+
+road1 = catmull_rom([(point['lon'], point['lat']) for point in [element for element in responseRoad['elements'] if element['id'] == 360575424][0]['geometry']], 100)
+road1 = road1[::-1]
+road2 = catmull_rom([(point['lon'], point['lat']) for point in [element for element in responseRoad['elements'] if element['id'] == 360575427][0]['geometry']], 100)
+road2 = road2[::-1]
+road3 = catmull_rom([(point['lon'], point['lat']) for point in [element for element in responseRoad['elements'] if element['id'] == 48852157][0]['geometry']], 100)
+road3 = road3[::-1]
+
+road = np.concatenate((road1, road2, road3))
+
+l = [len(road1), len(road2), len(road3)]
+l_cum = [sum(l[:i+1]) for i in range(len(l))]
+
+del road1, road2, road3
+
+distances_raw = []
+roadid_raw = []
+i = 0
+for index, row in r.raw.iterrows():
+    dist_min = float("+Inf")
+    best_i = i
+    count = 0
+    while i < len(road):
+        dist = np.sqrt((row["position_x"] - road[i][0])**2 + (row["position_y"] - road[i][1])**2)
+        if dist < dist_min:
+            dist_min = dist
+            best_i = i
+            count = 0
+        else:
+            count += 1
+        if count >= 100:
+            break
+        i += 1
+    distances_raw.append(dist_min)
+    for i, li in enumerate(l_cum):
+        if best_i < li:
+            roadid_raw.append(i + 1)
+            break
+    else:
+        roadid_raw.append(len(l))
+    i = max(best_i - 100, 0)
+
+distances_custom = []
+roadid_custom = []
+i = 0
+for index, row in r.custom.iterrows():
+    dist_min = float("+Inf")
+    best_i = i
+    count = 0
+    while i < len(road):
+        dist = np.sqrt((row["position_x"] - road[i][0])**2 + (row["position_y"] - road[i][1])**2)
+        if dist < dist_min:
+            dist_min = dist
+            best_i = i
+            count = 0
+        else:
+            count += 1
+        if count >= 100:
+            break
+        i += 1
+    distances_custom.append(dist_min)
+    for i, li in enumerate(l_cum):
+        if best_i < li:
+            roadid_custom.append(i + 1)
+            break
+    else:
+        roadid_custom.append(len(l))
+    i = max(best_i - 100, 0)
+
+distances_custom_elevation = []
+roadid_custom_elevation = []
+i = 0
+for index, row in r.custom_elevation.iterrows():
+    dist_min = float("+Inf")
+    best_i = i
+    count = 0
+    while i < len(road):
+        dist = np.sqrt((row["position_x"] - road[i][0])**2 + (row["position_y"] - road[i][1])**2)
+        if dist < dist_min:
+            dist_min = dist
+            best_i = i
+            count = 0
+        else:
+            count += 1
+        if count >= 100:
+            break
+        i += 1
+    distances_custom_elevation.append(dist_min)
+    for i, li in enumerate(l_cum):
+        if best_i < li:
+            roadid_custom_elevation.append(i + 1)
+            break
+    else:
+        roadid_custom_elevation.append(len(l))
+    i = max(best_i - 100, 0)
+
+```
+
+```{r}
+raw = raw %>% mutate(
+  dist_reference = unlist(as.vector(py$distances_raw)),
+  road_id = unlist(as.vector(py$roadid_raw))
+)
+custom = custom %>% mutate(
+  dist_reference = unlist(as.vector(py$distances_custom)),
+  road_id = unlist(as.vector(py$roadid_custom))
+)
+custom_elevation = custom_elevation %>% mutate(
+  dist_reference = unlist(as.vector(py$distances_custom_elevation)),
+  road_id = unlist(as.vector(py$roadid_custom_elevation))
+)
+
+road_raw = data.frame(x=c(rep(NA, 7600)), y=c(rep(NA, 7600)))
+names(road_raw) = c("x", "y")
+road_custom = as.data.frame(py$road)
+names(road_custom) = c("x", "y")
+road_custom_elevation = as.data.frame(py$road)
+names(road_custom_elevation) = c("x", "y")
+
+lane_width_raw = 5
+lane_width_custom = 5
+lane_width_custom_elevation = 5
+
+if(!file.exists("output")){
+  dir.create("output")
+}
+
+```
+
+# Stats, graphs and test comparisons
+
+```{r}
+plot_3var = function(data, title, variable1, variable1_scale, variable1_name, variable2, variable2_scale, variable2_name, variable3, variable3_scale, variable3_name){
+  p = data %>%
+    ggplot(aes(x = variable1, y = variable2, color = variable3)) +
+      scale_x_continuous(limits = c(variable1_scale[1], variable1_scale[2]), breaks = seq(variable1_scale[1], variable1_scale[2], variable1_scale[3])) +
+      scale_y_continuous(limits = c(variable2_scale[1], variable2_scale[2]), breaks = seq(variable2_scale[1], variable2_scale[2], variable2_scale[3])) +
+      coord_fixed(ratio = 1) +
+      scale_color_gradient(low = "#6B9EE1", high = "#86F5FA", limits = c(variable3_scale[1], variable3_scale[2]), breaks = seq(variable3_scale[1], variable3_scale[2], variable3_scale[3])) +
+      labs(title = title, x = variable1_name, y = variable2_name, colour = variable3_name) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(color = "#000000"), axis.text.y = element_text(color = "#000000"), axis.line = element_line(color = "#000000"), panel.background = element_rect(fill = "#ffffff"), panel.grid.major.x = element_line(colour = "#ebebeb"), panel.grid.major.y = element_line(colour = "#ebebeb"), plot.title = element_text(size = rel(1.5)))
+  return(p)
+}
+
+plot_2var = function(data, title, variable1, variable1_scale, variable1_name, variable2, variable2_scale, variable2_name){
+  p = data %>%
+    ggplot(aes(x = variable1, y = variable2)) +
+      scale_x_continuous(limits = c(variable1_scale[1], variable1_scale[2]), breaks = seq(variable1_scale[1], variable1_scale[2], variable1_scale[3])) +
+      scale_y_continuous(limits = c(variable2_scale[1], variable2_scale[2]), breaks = seq(variable2_scale[1], variable2_scale[2], variable2_scale[3])) +
+      labs(title = title, x = variable1_name, y = variable2_name) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(color = "#000000"), axis.text.y = element_text(color = "#000000"), axis.line = element_line(color = "#000000"), panel.background = element_rect(fill = "#ffffff"), panel.grid.major.x = element_line(colour = "#ebebeb"), panel.grid.major.y = element_line(colour = "#ebebeb"), plot.title = element_text(size = rel(1.5)))
+  return(p)
+}
+
+calc_scale = function(var){
+  return(c(floor(min(var)), floor(max(var))+1, (floor(max(var))+1 - floor(min(var)))/4))
+}
+
+#stats
+#time
+raw[nrow(raw),]$time
+custom[nrow(custom),]$time
+custom_elevation[nrow(custom_elevation),]$time
+
+#distance planar
+raw[nrow(raw),]$dist_planar
+custom[nrow(custom),]$dist_planar
+custom_elevation[nrow(custom_elevation),]$dist_planar
+
+#distance spatial
+raw[nrow(raw),]$dist_spatial
+custom[nrow(custom),]$dist_spatial
+custom_elevation[nrow(custom_elevation),]$dist_spatial
+
+#elevation
+raw[nrow(raw),]$elevation_cum
+custom[nrow(custom),]$elevation_cum
+custom_elevation[nrow(custom_elevation),]$elevation_cum
+
+#graphs
+#position z
+ggsave("output/position z.png", grid.arrange(
+  plot_3var(
+    raw, "A) Raw - position x y and z",
+    raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+    raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+    raw$position_z-min(raw$position_z), c(0, floor(max(raw$position_z-min(raw$position_z)))+1, 1), "position z - m"
+  ) +
+    geom_point(alpha = 1),
+  plot_3var(
+    custom, "B) Custom - position x y and z",
+    custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+    custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+    custom$position_z-min(custom$position_z), c(0, floor(max(custom$position_z-min(custom$position_z)))+1, 1), "position z - m"
+  ) +
+    geom_point(alpha = 1),
+  plot_3var(
+    custom_elevation, "C) Custom elevation - position x y and z",
+    custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+    custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+    custom_elevation$position_z-min(custom_elevation$position_z), c(0, floor(max(custom_elevation$position_z-min(custom_elevation$position_z)))+1, 1), "position z - m"
+  ) +
+    geom_point(alpha = 1),
+  plot_2var(
+    raw, "D) Raw - z",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$position_z-min(raw$position_z), c(0, floor(max(raw$position_z-min(raw$position_z)))+1, 1), "position z - m"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom, "E) Custom - z",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$position_z-min(custom$position_z), c(0, floor(max(custom$position_z-min(custom$position_z)))+1, 1), "position z - m"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom_elevation, "F) Custom elevation - z",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$position_z-min(custom_elevation$position_z), c(0, floor(max(custom_elevation$position_z-min(custom_elevation$position_z)))+1, 1), "position z - m"
+  ) +
+    geom_line(color="#6B9EE1"),
+  nrow = 2, ncol = 3), width = 10*3, height = 5*2)
+
+#position rph
+ggsave("output/position rph.png", grid.arrange(
+  # plot_3var(
+  #   raw, "X) Raw - position x y and pitch",
+  #   raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+  #   raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+  #   raw$position_p_norm, calc_scale(c(raw$position_p_norm, custom$position_p_norm, custom_elevation$position_p_norm)), "pitch - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom, "Y) Custom - position x y and pitch",
+  #   custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+  #   custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+  #   custom$position_p_norm, calc_scale(c(raw$position_p_norm, custom$position_p_norm, custom_elevation$position_p_norm)), "pitch - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom_elevation, "Z) Custom elevation - position x y and pitch",
+  #   custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+  #   custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+  #   custom_elevation$position_p_norm, calc_scale(c(raw$position_p_norm, custom$position_p_norm, custom_elevation$position_p_norm)), "pitch - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   raw, "X) Raw - position x y and roll",
+  #   raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+  #   raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+  #   raw$position_r_norm, calc_scale(c(raw$position_r_norm, custom$position_r_norm, custom_elevation$position_r_norm)), "roll - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom, "Y) Custom - position x y and roll",
+  #   custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+  #   custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+  #   custom$position_r_norm, calc_scale(c(raw$position_rp_norm, custom$position_r_norm, custom_elevation$position_r_norm)), "roll - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom_elevation, "Z) Custom elevation - position x y and roll",
+  #   custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+  #   custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+  #   custom_elevation$position_r_norm, calc_scale(c(raw$position_r_norm, custom$position_r_norm, custom_elevation$position_r_norm)), "roll - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   raw, "X) Raw - position x y and yaw",
+  #   raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+  #   raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+  #   raw$position_h_norm, c(-180, 180, 45), "yaw - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom, "Y) Custom - position x y and yaw",
+  #   custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+  #   custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+  #   custom$position_h_norm, c(-180, 180, 45), "yaw - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom_elevation, "Z) Custom elevation - position x y and yaw",
+  #   custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+  #   custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+  #   custom_elevation$position_h_norm, c(-180, 180, 45), "yaw - deg"
+  # ) +
+  #   geom_point(alpha = 1),
+  plot_2var(
+    raw, "A) Raw - pitch",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$position_p_norm, calc_scale(c(raw$position_p_norm, custom$position_p_norm, custom_elevation$position_p_norm)), "pitch - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom, "B) Custom - pitch",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$position_p_norm, calc_scale(c(raw$position_p_norm, custom$position_p_norm, custom_elevation$position_p_norm)), "pitch - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom_elevation, "C) Custom elevation - pitch",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$position_p_norm, calc_scale(c(raw$position_p_norm, custom$position_p_norm, custom_elevation$position_p_norm)), "pitch - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    raw, "D) Raw - roll",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$position_r_norm, calc_scale(c(raw$position_r_norm, custom$position_r_norm, custom_elevation$position_r_norm)), "roll - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom, "E) Custom - roll",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$position_r_norm, calc_scale(c(raw$position_r_norm, custom$position_r_norm, custom_elevation$position_r_norm)), "roll - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom_elevation, "F) Custom elevation - roll",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$position_r_norm, calc_scale(c(raw$position_r_norm, custom$position_r_norm, custom_elevation$position_r_norm)), "roll - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    raw, "G) Raw - yaw",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$position_h_norm, c(-180, 180, 45), "yaw - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom, "H) Custom - yaw",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$position_h_norm, c(-180, 180, 45), "yaw - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom_elevation, "I) Custom elevation - yaw",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$position_h_norm, c(-180, 180, 45), "yaw - deg"
+  ) +
+    geom_line(color="#6B9EE1"),
+  nrow = 3, ncol = 3), width = 10*3, height = 5*3)
+
+#speed
+ggsave("output/speed.png", grid.arrange(
+  plot_3var(
+    raw, "A) Raw - position x y and speed spatial",
+    raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+    raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+    raw$speed_spatial_norm, c(0, floor(max(raw$speed_spatial_norm))+1, 20), "speed spatial - km/h"
+  ) +
+    geom_point(alpha = 1),
+  plot_3var(
+    custom, "B) Custom - position x y and speed spatial",
+    custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+    custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+    custom$speed_spatial_norm, c(0, floor(max(custom$speed_spatial_norm))+1, 20), "speed spatial - km/h"
+  ) +
+    geom_point(alpha = 1),
+  plot_3var(
+    custom_elevation, "C) Custom elevation - position x y and speed spatial",
+    custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+    custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+    custom_elevation$speed_spatial_norm, c(0, floor(max(custom_elevation$speed_spatial_norm))+1, 20), "speed spatial - km/h"
+  ) +
+    geom_point(alpha = 1),
+  plot_2var(
+    raw, "D) Raw - speed planar and spatial",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$speed_spatial_norm, c(0, floor(max(raw$speed_spatial_norm))+1, 20), "speed planar and spatial"
+  ) +
+    geom_line(aes(y = raw$speed_planar_norm, color = "speed planar")) +
+    geom_line(aes(y = raw$speed_spatial_norm, color = "speed spatial")) +
+    scale_color_manual(values = c("speed planar" = "#86F5FA", "speed spatial" = "#6B9EE1")) +
+    labs(color = "speed - km/h"),
+  plot_2var(
+    custom, "E) Custom - speed planar and spatial",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$speed_spatial_norm, c(0, floor(max(custom$speed_spatial_norm))+1, 20), "speed planar and spatial"
+  ) +
+    geom_line(aes(y = custom$speed_planar_norm, color = "speed planar")) +
+    geom_line(aes(y = custom$speed_spatial_norm, color = "speed spatial")) +
+    scale_color_manual(values = c("speed planar" = "#86F5FA", "speed spatial" = "#6B9EE1")) +
+    labs(color = "speed - km/h"),
+  plot_2var(
+    custom_elevation, "F) Custom elevation - speed planar and spatial",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$speed_spatial_norm, c(0, floor(max(custom_elevation$speed_spatial_norm))+1, 20), "speed planar and spatial"
+  ) +
+    geom_line(aes(y = custom_elevation$speed_planar_norm, color = "speed planar")) +
+    geom_line(aes(y = custom_elevation$speed_spatial_norm, color = "speed spatial")) +
+    scale_color_manual(values = c("speed planar" = "#86F5FA", "speed spatial" = "#6B9EE1")) +
+    labs(color = "speed - km/h"),
+  nrow = 2, ncol = 3), width = 10*3, height = 5*2)
+
+#acceleration
+ggsave("output/acceleration.png", grid.arrange(
+  plot_3var(
+    raw, "A) Raw - acceleration x y and z",
+    raw$acceleration_x_norm, c(calc_scale(c(raw$acceleration_x_norm, raw$acceleration_y_norm))[c(1,2)], 1), "acceleration x - G",
+    raw$acceleration_y_norm, c(calc_scale(c(raw$acceleration_x_norm, raw$acceleration_y_norm))[c(1,2)], 1), "acceleration y - G",
+    raw$acceleration_z_norm, c(floor(min(raw$acceleration_z_norm)), floor(max(raw$acceleration_z_norm))+1, 1), "acceleration z - G"
+  ) +
+    geom_point(alpha = 1),
+  plot_3var(
+    custom, "B) Custom - acceleration x y and z",
+    custom$acceleration_x_norm, c(calc_scale(c(custom$acceleration_x_norm, custom$acceleration_y_norm))[c(1,2)], 1), "acceleration x - G",
+    custom$acceleration_y_norm, c(calc_scale(c(custom$acceleration_x_norm, custom$acceleration_y_norm))[c(1,2)], 1), "acceleration y - G",
+    custom$acceleration_z_norm, c(floor(min(custom$acceleration_z_norm)), floor(max(custom$acceleration_z_norm))+1, 1), "acceleration z - G"
+  ) +
+    geom_point(alpha = 1),
+  plot_3var(
+    custom_elevation, "C) Custom elevation - acceleration x y and z",
+    custom_elevation$acceleration_x_norm, c(calc_scale(c(custom_elevation$acceleration_x_norm, custom_elevation$acceleration_y_norm))[c(1,2)], 1), "acceleration x - G",
+    custom_elevation$acceleration_y_norm, c(calc_scale(c(custom_elevation$acceleration_x_norm, custom_elevation$acceleration_y_norm))[c(1,2)], 1), "acceleration y - G",
+    custom_elevation$acceleration_z_norm, c(floor(min(custom_elevation$acceleration_z_norm)), floor(max(custom_elevation$acceleration_z_norm))+1, 1), "acceleration z - G"
+  ) +
+    geom_point(alpha = 1),
+  plot_2var(
+    raw, "D) Raw - acceleration x y and z",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$acceleration_x_norm, c(calc_scale(c(raw$acceleration_x_norm, raw$acceleration_y_norm))[c(1,2)], 1), "acceleration planar and spatial"
+  ) +
+    geom_line(aes(y = raw$acceleration_x_norm, color = "acceleration x")) +
+    geom_line(aes(y = raw$acceleration_y_norm, color = "acceleration y")) +
+    geom_line(aes(y = raw$acceleration_z_norm, color = "acceleration z")) +
+    scale_color_manual(values = c("acceleration x" = "#86F5FA", "acceleration y" = "#79CAEE", "acceleration z" = "#6B9EE1")) +
+    labs(color = "acceleration - G"),
+  plot_2var(
+    custom, "E) Custom - acceleration x y and z",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$acceleration_x_norm, c(calc_scale(c(custom$acceleration_x_norm, custom$acceleration_y_norm))[c(1,2)], 1), "acceleration planar and spatial"
+  ) +
+    geom_line(aes(y = custom$acceleration_x_norm, color = "acceleration x")) +
+    geom_line(aes(y = custom$acceleration_y_norm, color = "acceleration y")) +
+    geom_line(aes(y = custom$acceleration_z_norm, color = "acceleration z")) +
+    scale_color_manual(values = c("acceleration x" = "#86F5FA", "acceleration y" = "#79CAEE", "acceleration z" = "#6B9EE1")) +
+    labs(color = "acceleration - G"),
+  plot_2var(
+    custom_elevation, "F) Custom elevation - acceleration x y and z",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$acceleration_x_norm, c(calc_scale(c(custom_elevation$acceleration_x_norm, custom_elevation$acceleration_y_norm))[c(1,2)], 1), "acceleration planar and spatial"
+  ) +
+    geom_line(aes(y = custom_elevation$acceleration_x_norm, color = "acceleration x")) +
+    geom_line(aes(y = custom_elevation$acceleration_y_norm, color = "acceleration y")) +
+    geom_line(aes(y = custom_elevation$acceleration_z_norm, color = "acceleration z")) +
+    scale_color_manual(values = c("acceleration x" = "#86F5FA", "acceleration y" = "#79CAEE", "acceleration z" = "#6B9EE1")) +
+    labs(color = "acceleration - G"),
+  # plot_3var(
+  #   raw, "X) Raw - position x y and acceleration spatial",
+  #   raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+  #   raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+  #   raw$acceleration_spatial_norm, c(floor(min(raw$acceleration_spatial_norm)), floor(max(raw$acceleration_spatial_norm))+1, 1), "acceleration spatial - G"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom, "Y) Custom - position x y and acceleration spatial",
+  #   custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+  #   custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+  #   custom$acceleration_spatial_norm, c(floor(min(custom$acceleration_spatial_norm)), floor(max(custom$acceleration_spatial_norm))+1, 1), "acceleration spatial - G"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom_elevation, "Z) Custom elevation - position x y and acceleration spatial",
+  #   custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+  #   custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+  #   custom_elevation$acceleration_spatial_norm, c(floor(min(custom_elevation$acceleration_spatial_norm)), floor(max(custom_elevation$acceleration_spatial_norm))+1, 1), "acceleration spatial - G"
+  # ) +
+  #   geom_point(alpha = 1),
+  plot_2var(
+    raw, "G) Raw - acceleration planar and spatial",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$acceleration_spatial_norm, c(floor(min(raw$acceleration_spatial_norm)), floor(max(raw$acceleration_spatial_norm))+1, 1), "acceleration planar and spatial"
+  ) +
+    geom_line(aes(y = raw$acceleration_planar_norm, color = "acceleration planar")) +
+    geom_line(aes(y = raw$acceleration_spatial_norm, color = "acceleration spatial")) +
+    scale_color_manual(values = c("acceleration planar" = "#86F5FA", "acceleration spatial" = "#6B9EE1")) +
+    labs(color = "acceleration - G"),
+  plot_2var(
+    custom, "H) Custom - acceleration planar and spatial",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$acceleration_spatial_norm, c(floor(min(custom$acceleration_spatial_norm)), floor(max(custom$acceleration_spatial_norm))+1, 1), "acceleration planar and spatial"
+  ) +
+    geom_line(aes(y = custom$acceleration_planar_norm, color = "acceleration planar")) +
+    geom_line(aes(y = custom$acceleration_spatial_norm, color = "acceleration spatial")) +
+    scale_color_manual(values = c("acceleration planar" = "#86F5FA", "acceleration spatial" = "#6B9EE1")) +
+    labs(color = "acceleration - G"),
+  plot_2var(
+    custom_elevation, "I) Custom elevation - acceleration planar and spatial",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$acceleration_spatial_norm, c(floor(min(custom_elevation$acceleration_spatial_norm)), floor(max(custom_elevation$acceleration_spatial_norm))+1, 1), "acceleration planar and spatial"
+  ) +
+    geom_line(aes(y = custom_elevation$acceleration_planar_norm, color = "acceleration planar")) +
+    geom_line(aes(y = custom_elevation$acceleration_spatial_norm, color = "acceleration spatial")) +
+    scale_color_manual(values = c("acceleration planar" = "#86F5FA", "acceleration spatial" = "#6B9EE1")) +
+    labs(color = "acceleration - G"),
+  nrow = 3, ncol = 3), width = 10*3, height = 5*3)
+
+#distance
+ggsave("output/distance.png", grid.arrange(
+  # plot_3var(
+  #   raw, "X) Raw - position x y and distance spatial",
+  #   raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+  #   raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+  #   raw$dist_spatial, c(0, floor(max(raw$dist_spatial))+1, 100), "distance spatial - m"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom, "Y) Custom - position x y and distance spatial",
+  #   custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+  #   custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+  #   custom$dist_spatial, c(0, floor(max(custom$dist_spatial))+1, 100), "distance spatial - m"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom_elevation, "Z) Custom elevation - position x y and distance spatial",
+  #   custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+  #   custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+  #   custom_elevation$dist_spatial, c(0, floor(max(custom_elevation$dist_spatial))+1, 100), "distance spatial - m"
+  # ) +
+  #   geom_point(alpha = 1),
+  plot_2var(
+    raw, "A) Raw - distance planar and spatial",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$dist_spatial, c(0, floor(max(raw$dist_spatial))+1, 100), "distance planar and spatial"
+  ) +
+    geom_line(aes(y = raw$dist_planar, color = "distance planar")) +
+    geom_line(aes(y = raw$dist_spatial, color = "distance spatial")) +
+    scale_color_manual(values = c("distance planar" = "#86F5FA", "distance spatial" = "#6B9EE1")) +
+    labs(color = "distance - m"),
+  plot_2var(
+    custom, "B) Custom - distance planar and spatial",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$dist_spatial, c(0, floor(max(custom$dist_spatial))+1, 100), "distance planar and spatial"
+  ) +
+    geom_line(aes(y = custom$dist_planar, color = "distance planar")) +
+    geom_line(aes(y = custom$dist_spatial, color = "distance spatial")) +
+    scale_color_manual(values = c("distance planar" = "#86F5FA", "distance spatial" = "#6B9EE1")) +
+    labs(color = "distance - m"),
+  plot_2var(
+    custom_elevation, "C) Custom elevation - distance planar and spatial",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$dist_spatial, c(0, floor(max(custom_elevation$dist_spatial))+1, 100), "distance planar and spatial"
+  ) +
+    geom_line(aes(y = custom_elevation$dist_planar, color = "distance planar")) +
+    geom_line(aes(y = custom_elevation$dist_spatial, color = "distance spatial")) +
+    scale_color_manual(values = c("distance planar" = "#86F5FA", "distance spatial" = "#6B9EE1")) +
+    labs(color = "distance - m"),
+  nrow = 1, ncol = 3), width = 10*3, height = 5*1)
+
+#steering
+ggsave("output/steering.png", grid.arrange(
+  # plot_3var(
+  #   raw, "X) Raw - position x y and steering",
+  #   raw$position_x-min(raw$position_x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+  #   raw$position_y-min(raw$position_y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m",
+  #   raw$steering, c(floor(min(raw$steering)), floor(max(raw$steering))+1, 1), "steering"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom, "Y) Custom - position x y and steering",
+  #   custom$position_x-min(custom$position_x), c(0, floor(max(custom$position_x-min(custom$position_x)))+1, 100), "position x - m",
+  #   custom$position_y-min(custom$position_y), c(0, floor(max(custom$position_y-min(custom$position_y)))+1, 100), "position y - m",
+  #   custom$steering, c(floor(min(custom$steering)), floor(max(custom$steering))+1, 1), "steering"
+  # ) +
+  #   geom_point(alpha = 1),
+  # plot_3var(
+  #   custom_elevation, "Z) Custom elevation - position x y and steering",
+  #   custom_elevation$position_x-min(custom_elevation$position_x), c(0, floor(max(custom_elevation$position_x-min(custom_elevation$position_x)))+1, 100), "position x - m",
+  #   custom_elevation$position_y-min(custom_elevation$position_y), c(0, floor(max(custom_elevation$position_y-min(custom_elevation$position_y)))+1, 100), "position y - m",
+  #   custom_elevation$steering, c(floor(min(custom_elevation$steering)), floor(max(custom_elevation$steering))+1, 1), "steering"
+  # ) +
+  #   geom_point(alpha = 1),
+  plot_2var(
+    raw, "A) Raw - steering",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$steering, c(floor(min(raw$steering)), floor(max(raw$steering))+1, 1), "steering"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom, "B) Custom - steering",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$steering, c(floor(min(custom$steering)), floor(max(custom$steering))+1, 1), "steering"
+  ) +
+    geom_line(color="#6B9EE1"),
+  plot_2var(
+    custom_elevation, "C) Custom elevation - steering",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$steering, c(floor(min(custom_elevation$steering)), floor(max(custom_elevation$steering))+1, 1), "steering"
+  ) +
+    geom_line(color="#6B9EE1"),
+  nrow = 1, ncol = 3), width = 10*3, height = 5*1)
+
+#distance from reference
+ggsave("output/distance reference.png", grid.arrange(
+  plot_2var(
+    road_raw, "A) Raw - distance from reference",
+    road_raw$x-min(road_raw$x), c(0, floor(max(raw$position_x-min(raw$position_x)))+1, 100), "position x - m",
+    road_raw$y-min(road_raw$y), c(0, floor(max(raw$position_y-min(raw$position_y)))+1, 100), "position y - m"
+  ) +
+    geom_point(aes(x = road_raw$x-min(road_raw$x), y = road_raw$y-min(road_raw$y), color = "reference")) +
+    geom_point(aes(x = c(raw$position_x-min(road_raw$x), rep(NA, length(road_raw$x)-length(raw$position_x))), y = c(raw$position_y-min(road_raw$y), rep(NA, length(road_raw$y)-length(raw$position_y))), color = "test")) +
+    scale_color_manual(values = c("reference" = "#86F5FA", "test" = "#6B9EE1")) +
+    labs(color = "road"),
+  plot_2var(
+    road_custom, "B) Custom - distance from reference",
+    road_custom$x-min(road_custom$x), c(0, floor(max(road_custom$x-min(road_custom$x)))+1, 100), "position x - m",
+    road_custom$y-min(road_custom$y), c(0, floor(max(road_custom$y-min(road_custom$y)))+1, 100), "position y - m"
+  ) +
+    geom_point(aes(x = road_custom$x-min(road_custom$x), y = road_custom$y-min(road_custom$y), color = "reference")) +
+    geom_point(aes(x = c(custom$position_x-min(road_custom$x), rep(NA, length(road_custom$x)-length(custom$position_x))), y = c(custom$position_y-min(road_custom$y), rep(NA, length(road_custom$y)-length(custom$position_y))), color = "test")) +
+    scale_color_manual(values = c("reference" = "#86F5FA", "test" = "#6B9EE1")) +
+    labs(color = "road"),
+  plot_2var(
+    road_custom_elevation, "C) Custom elevation - distance from reference",
+    road_custom_elevation$x-min(road_custom_elevation$x), c(0, floor(max(road_custom_elevation$x-min(road_custom_elevation$x)))+1, 100), "position x - m",
+    road_custom_elevation$y-min(road_custom_elevation$y), c(0, floor(max(road_custom_elevation$y-min(road_custom_elevation$y)))+1, 100), "position y - m"
+  ) +
+    geom_point(aes(x = road_custom_elevation$x-min(road_custom_elevation$x), y = road_custom_elevation$y-min(road_custom_elevation$y), color = "reference")) +
+    geom_point(aes(x = c(custom_elevation$position_x-min(road_custom_elevation$x), rep(NA, length(road_custom_elevation$x)-length(custom_elevation$position_x))), y = c(custom_elevation$position_y-min(road_custom_elevation$y), rep(NA, length(road_custom_elevation$y)-length(custom_elevation$position_y))), color = "test")) +
+    scale_color_manual(values = c("reference" = "#86F5FA", "test" = "#6B9EE1")) +
+    labs(color = "road"),
+  plot_2var(
+    raw, "D) Raw - distance from reference",
+    raw$time-min(raw$time), c(0, floor(max(raw$time-min(raw$time)))+1, 10), "time - s",
+    raw$dist_reference, c(0, max(floor(max(raw$dist_reference))+1, lane_width_raw), 100), "distance from reference - m"
+  ) +
+    geom_line(color="#6B9EE1") +
+    geom_hline(aes(yintercept = lane_width_raw), color="#86F5FA") +
+    geom_vline(data = raw %>% filter(road_id != lag(road_id, default = first(road_id))) %>% select(time), aes(xintercept = time), color = "#86F5FA"),
+  plot_2var(
+    custom, "E) Custom - distance from reference",
+    custom$time-min(custom$time), c(0, floor(max(custom$time-min(custom$time)))+1, 10), "time - s",
+    custom$dist_reference, c(0, max(floor(max(custom$dist_reference))+1, lane_width_custom), 1), "distance from reference - m"
+  ) +
+    geom_line(color="#6B9EE1") +
+    geom_hline(aes(yintercept = lane_width_custom), color="#86F5FA") +
+    geom_vline(data = custom %>% filter(road_id != lag(road_id, default = first(road_id))) %>% select(time), aes(xintercept = time), color = "#86F5FA"),
+  plot_2var(
+    custom_elevation, "F) Custom elevation - distance from reference",
+    custom_elevation$time-min(custom_elevation$time), c(0, floor(max(custom_elevation$time-min(custom_elevation$time)))+1, 10), "time - s",
+    custom_elevation$dist_reference, c(0, max(floor(max(custom_elevation$dist_reference))+1, lane_width_custom_elevation), 1), "distance from reference - m"
+  ) +
+    geom_line(color="#6B9EE1") +
+    geom_hline(aes(yintercept = lane_width_custom_elevation), color="#86F5FA") +
+    geom_vline(data = custom_elevation %>% filter(road_id != lag(road_id, default = first(road_id))) %>% select(time), aes(xintercept = time), color = "#86F5FA"),
+  nrow = 2, ncol = 3), width = 10*3, height = 5*2)
+
+```
+
+# Distance from reference
+
+```{r}
+#We proceed with the analysis of how road generator influences the average distance form reference
+#We study how dist_reference varies with dataset
+summary(raw$dist_reference)
+sd(raw$dist_reference)
+skewness(raw$dist_reference)
+kurtosis(raw$dist_reference)
+summary(custom$dist_reference)
+sd(custom$dist_reference)
+skewness(custom$dist_reference)
+kurtosis(custom$dist_reference)
+summary(custom_elevation$dist_reference)
+sd(custom_elevation$dist_reference)
+skewness(custom_elevation$dist_reference)
+kurtosis(custom_elevation$dist_reference)
+par(mfrow=c(1,3))
+boxplot(raw$dist_reference, main="Raw", horizontal=F)
+boxplot(custom$dist_reference, main="Custom", horizontal=F)
+boxplot(custom_elevation$dist_reference, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for dist_reference given raw
+#- both from summary and boxplot the data has the same value for min, max, avg, median
+#while for both dist_reference given custom and custom_elevation
+#- from the summary there is left asymmetry (median less than mean), for both custom and custom_elevation (more pronounced)
+#- from boxplot, it confirms what said above because both the median is in the lower part of the box of 1st and 3rd quartile and the two minimum and maximum lines have different lengths (maximum longer than minimum) and in custom_elevation there are outliers
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$dist_reference, main="Raw")
+qqline(raw$dist_reference)
+qqnorm(custom$dist_reference, main="Custom")
+qqline(custom$dist_reference)
+qqnorm(custom_elevation$dist_reference, main="Custom elevation")
+qqline(custom_elevation$dist_reference)
+par(mfrow=c(1,1))
+#From the output it can be deduced for dist_reference given raw and custom
+#- from the qqpolt (graph that relates the quatiles of the normal and the quantiles of the given distribution), it can be seen that the two distributions are not normal due to the tails (both) which do not follow the straight line
+#while for dist_reference given raw and custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line and also the main part of the distribution doesn't follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between raw and custom
+var.test(raw$dist_reference, custom$dist_reference, conf.level = 0.99, alternative = c("two.sided"))
+#test between custom and custom_elevation
+var.test(custom$dist_reference, custom_elevation$dist_reference, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for dist_reference given raw and custom
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+#also for dist_reference given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different in the two populations.
+#test between raw and custom
+t.test(raw$dist_reference, custom$dist_reference, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#test between custom and custom_elevation
+t.test(custom$dist_reference, custom_elevation$dist_reference, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#From the output it can be deduced for dist_reference given raw and custom
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+#also for dist_reference given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+
+#so the road generator influences the average distance form reference (also the variance).
+
+```
+
+# Steering
+
+```{r}
+#We proceed with the analysis of how road generator influences the average steering
+#We study how steering varies with dataset
+summary(raw$steering)
+sd(raw$steering)
+skewness(raw$steering)
+kurtosis(raw$steering)
+summary(custom$steering)
+sd(custom$steering)
+skewness(custom$steering)
+kurtosis(custom$steering)
+summary(custom_elevation$steering)
+sd(custom_elevation$steering)
+skewness(custom_elevation$steering)
+kurtosis(custom_elevation$steering)
+par(mfrow=c(1,3))
+boxplot(raw$steering, main="Raw", horizontal=F)
+boxplot(custom$steering, main="Custom", horizontal=F)
+boxplot(custom_elevation$steering, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for steering given raw
+#- both from summary and boxplot the data has the same value for min, max, avg, median
+#while for both steering given custom and custom_elevation
+#- from the summary there is right asymmetry (median more than mean), for both custom and custom_elevation
+#- from boxplot, it confirms what said above because the median is in the upper part of the box of 1st and 3rd quartile and in custom_elevation there are outliers
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$steering, main="Raw")
+qqline(raw$steering)
+qqnorm(custom$steering, main="Custom")
+qqline(custom$steering)
+qqnorm(custom_elevation$steering, main="Custom elevation")
+qqline(custom_elevation$steering)
+par(mfrow=c(1,1))
+#From the output it can be deduced for steering given raw
+#- from the qqpolt (graph that relates the quatiles of the normal and the quantiles of the given distribution), it can be seen that the distributions is normal, but all the data is 0 (so it will not be used for future tests)
+#while for steering given custom
+#- from the qqpolt, it can be seen that the distribution is not normal due to the tails (both) which do not follow the straight line
+#while for steering given custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line and also the main part of the distribution doesn't follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between custom and custom_elevation
+var.test(custom$steering, custom_elevation$steering, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for steering given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different in the two populations.
+#test between custom and custom_elevation
+t.test(custom$steering, custom_elevation$steering, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#From the output it can be deduced for steering given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+
+#so the road generator influences the average steering (also the variance).
+
+```
+
+# Distance planar, distance spatial
+
+```{r}
+#We proceed with the analysis of how road generator influences the average distance 2D
+#We study how dist_planar varies with dataset
+summary(raw$dist_planar)
+sd(raw$dist_planar)
+skewness(raw$dist_planar)
+kurtosis(raw$dist_planar)
+summary(custom$dist_planar)
+sd(custom$dist_planar)
+skewness(custom$dist_planar)
+kurtosis(custom$dist_planar)
+summary(custom_elevation$dist_planar)
+sd(custom_elevation$dist_planar)
+skewness(custom_elevation$dist_planar)
+kurtosis(custom_elevation$dist_planar)
+par(mfrow=c(1,3))
+boxplot(raw$dist_planar, main="Raw", horizontal=F)
+boxplot(custom$dist_planar, main="Custom", horizontal=F)
+boxplot(custom_elevation$dist_planar, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for dist_planar given raw
+#- both from summary and boxplot the data has very similar values for min, max, avg, median
+#while for both dist_planar given custom and custom_elevation
+#- from the summary there is right asymmetry (median more than mean), for both custom and custom_elevation
+#- from boxplot, it confirms what said above because the median is in the upper part of the box of 1st and 3rd quartile
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$dist_planar, main="Raw")
+qqline(raw$dist_planar)
+qqnorm(custom$dist_planar, main="Custom")
+qqline(custom$dist_planar)
+qqnorm(custom_elevation$dist_planar, main="Custom elevation")
+qqline(custom_elevation$dist_planar)
+par(mfrow=c(1,1))
+#From the output it can be deduced for dist_planar given raw, custom and custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between raw and custom
+var.test(raw$dist_planar, custom$dist_planar, conf.level = 0.99, alternative = c("two.sided"))
+#test between custom and custom_elevation
+var.test(custom$dist_planar, custom_elevation$dist_planar, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for dist_planar given raw and custom
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+#also for dist_planar given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered equal and also the high p-value (0.43) reinforces the decision to accept the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different (or with same) in the two populations.
+#test between raw and custom
+t.test(raw$dist_planar, custom$dist_planar, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#test between custom and custom_elevation
+t.test(custom$dist_planar, custom_elevation$dist_planar, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = T)
+#From the output it can be deduced for dist_planar given raw and custom
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+#also for dist_planar given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered equal and also the high p-value (0.48) reinforces the decision to accept the hypothesis that the means are equal
+
+#so the custom road generator influences the average distance 2D (also the variance), but the elevation doesn't influence the distance 2D.
+
+#We proceed with the analysis of how road generator influences the average distance 3D
+#We study how dist_planar varies with dataset
+summary(raw$dist_spatial)
+sd(raw$dist_spatial)
+skewness(raw$dist_spatial)
+kurtosis(raw$dist_spatial)
+summary(custom$dist_spatial)
+sd(custom$dist_spatial)
+skewness(custom$dist_spatial)
+kurtosis(custom$dist_spatial)
+summary(custom_elevation$dist_spatial)
+sd(custom_elevation$dist_spatial)
+skewness(custom_elevation$dist_spatial)
+kurtosis(custom_elevation$dist_spatial)
+par(mfrow=c(1,3))
+boxplot(raw$dist_spatial, main="Raw", horizontal=F)
+boxplot(custom$dist_spatial, main="Custom", horizontal=F)
+boxplot(custom_elevation$dist_spatial, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for dist_spatial given raw
+#- both from summary and boxplot the data has very similar values for min, max, avg, median
+#while for both dist_spatial given custom and custom_elevation
+#- from the summary there is right asymmetry (median more than mean), for both custom and custom_elevation
+#- from boxplot, it confirms what said above because the median is in the upper part of the box of 1st and 3rd quartile
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$dist_spatial, main="Raw")
+qqline(raw$dist_spatial)
+qqnorm(custom$dist_spatial, main="Custom")
+qqline(custom$dist_spatial)
+qqnorm(custom_elevation$dist_spatial, main="Custom elevation")
+qqline(custom_elevation$dist_spatial)
+par(mfrow=c(1,1))
+#From the output it can be deduced for dist_spatial given raw, custom and custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between raw and custom
+var.test(raw$dist_spatial, custom$dist_spatial, conf.level = 0.99, alternative = c("two.sided"))
+#test between custom and custom_elevation
+var.test(custom$dist_spatial, custom_elevation$dist_spatial, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for dist_spatial given raw and custom
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+#also for dist_spatial given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered equal and also the high p-value (0.44) reinforces the decision to accept the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different (or with same) in the two populations.
+#test between raw and custom
+t.test(raw$dist_spatial, custom$dist_spatial, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#test between custom and custom_elevation
+t.test(custom$dist_spatial, custom_elevation$dist_spatial, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = T)
+#From the output it can be deduced for dist_spatial given raw and custom
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+#also for dist_spatial given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered equal and also the high p-value (0.46) reinforces the decision to accept the hypothesis that the means are equal
+
+#so the custom road generator influences the average distance 3D (also the variance), but the elevation doesn't influence the distance 3D.
+
+```
+
+# Speed planar, speed spatial
+
+```{r}
+#We proceed with the analysis of how road generator influences the average speed 2D
+#We study how speed_planar varies with dataset
+summary(raw$speed_planar)
+sd(raw$speed_planar)
+skewness(raw$speed_planar)
+kurtosis(raw$speed_planar)
+summary(custom$speed_planar)
+sd(custom$speed_planar)
+skewness(custom$speed_planar)
+kurtosis(custom$speed_planar)
+summary(custom_elevation$speed_planar)
+sd(custom_elevation$speed_planar)
+skewness(custom_elevation$speed_planar)
+kurtosis(custom_elevation$speed_planar)
+par(mfrow=c(1,3))
+boxplot(raw$speed_planar, main="Raw", horizontal=F)
+boxplot(custom$speed_planar, main="Custom", horizontal=F)
+boxplot(custom_elevation$speed_planar, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for speed_planar given raw
+#- both from summary and boxplot the data has very similar values for min, max, avg, median
+#while for speed_planar given custom
+#- from the summary there is left asymmetry (median less than mean)
+#- from boxplot, it confirms what said above because the median is in the lower part of the box of 1st and 3rd quartile, there are some outliers
+#while for speed_planar given custom_elevation
+#- from the summary there is very light right asymmetry (median more than mean)
+#- from boxplot, it confirms what said above because the median is in the middle part of the box of 1st and 3rd quartile, there are some outliers
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$speed_planar, main="Raw")
+qqline(raw$speed_planar)
+qqnorm(custom$speed_planar, main="Custom")
+qqline(custom$speed_planar)
+qqnorm(custom_elevation$speed_planar, main="Custom elevation")
+qqline(custom_elevation$speed_planar)
+par(mfrow=c(1,1))
+#From the output it can be deduced for speed_planar given raw, custom and custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line and also the main part of the distribution doesn't follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between raw and custom
+var.test(raw$speed_planar, custom$speed_planar, conf.level = 0.99, alternative = c("two.sided"))
+#test between custom and custom_elevation
+var.test(custom$speed_planar, custom_elevation$speed_planar, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for speed_planar given raw and custom
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+#also for speed_planar given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (2.55e-8) reinforces the decision to decisively reject the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different in the two populations.
+#test between raw and custom
+t.test(raw$speed_planar, custom$speed_planar, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#test between custom and custom_elevation
+t.test(custom$speed_planar, custom_elevation$speed_planar, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#From the output it can be deduced for speed_planar given raw and custom
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+#also for speed_planar given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (7.53e-5) reinforces the decision to decisively reject the hypothesis that the means are equal
+
+#so the road generator influences the average speed 2D (also the variance).
+
+#We proceed with the analysis of how road generator influences the average speed 3D
+#We study how speed_spatial varies with dataset
+summary(raw$speed_spatial)
+sd(raw$speed_spatial)
+skewness(raw$speed_spatial)
+kurtosis(raw$speed_spatial)
+summary(custom$speed_spatial)
+sd(custom$speed_spatial)
+skewness(custom$speed_spatial)
+kurtosis(custom$speed_spatial)
+summary(custom_elevation$speed_spatial)
+sd(custom_elevation$speed_spatial)
+skewness(custom_elevation$speed_spatial)
+kurtosis(custom_elevation$speed_spatial)
+par(mfrow=c(1,3))
+boxplot(raw$speed_spatial, main="Raw", horizontal=F)
+boxplot(custom$speed_spatial, main="Custom", horizontal=F)
+boxplot(custom_elevation$speed_spatial, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for speed_spatial given raw
+#- both from summary and boxplot the data has very similar values for min, max, avg, median
+#while for speed_spatial given custom
+#- from the summary there is left asymmetry (median less than mean)
+#- from boxplot, it confirms what said above because the median is in the lower part of the box of 1st and 3rd quartile, there are some outliers
+#while for speed_spatial given custom_elevation
+#- from the summary there is very light right asymmetry (median more than mean)
+#- from boxplot, it confirms what said above because the median is in the middle part of the box of 1st and 3rd quartile, there are some outliers
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$speed_spatial, main="Raw")
+qqline(raw$speed_spatial)
+qqnorm(custom$speed_spatial, main="Custom")
+qqline(custom$speed_spatial)
+qqnorm(custom_elevation$speed_spatial, main="Custom elevation")
+qqline(custom_elevation$speed_spatial)
+par(mfrow=c(1,1))
+#From the output it can be deduced for speed_spatial given raw, custom and custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line and also the main part of the distribution doesn't follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between raw and custom
+var.test(raw$speed_spatial, custom$speed_spatial, conf.level = 0.99, alternative = c("two.sided"))
+#test between custom and custom_elevation
+var.test(custom$speed_spatial, custom_elevation$speed_spatial, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for speed_spatial given raw and custom
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+#also for speed_spatial given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (2.41e-8) reinforces the decision to decisively reject the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different in the two populations.
+#test between raw and custom
+t.test(raw$speed_spatial, custom$speed_spatial, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#test between custom and custom_elevation
+t.test(custom$speed_spatial, custom_elevation$speed_spatial, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#From the output it can be deduced for speed_spatial given raw and custom
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+#also for speed_spatial given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (8.36e-5) reinforces the decision to decisively reject the hypothesis that the means are equal
+
+#so the road generator influences the average speed 3D (also the variance).
+
+```
+
+# Position p, acceleration z
+
+```{r}
+#We proceed with the analysis of how road generator influences the pitch
+#We study how position_p varies with dataset
+summary(raw$position_p)
+sd(raw$position_p)
+skewness(raw$position_p)
+kurtosis(raw$position_p)
+summary(custom$position_p)
+sd(custom$position_p)
+skewness(custom$position_p)
+kurtosis(custom$position_p)
+summary(custom_elevation$position_p)
+sd(custom_elevation$position_p)
+skewness(custom_elevation$position_p)
+kurtosis(custom_elevation$position_p)
+par(mfrow=c(1,3))
+boxplot(raw$position_p, main="Raw", horizontal=F)
+boxplot(custom$position_p, main="Custom", horizontal=F)
+boxplot(custom_elevation$position_p, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for position_p given raw
+#- both from summary and boxplot the data has very similar values for min, max, avg, median
+#while for position_p given custom
+#- from the summary there is right asymmetry (median more than mean)
+#- from boxplot, it confirms what said above because the median is in the lower part of the box of 1st and 3rd quartile
+#while for position_p given custom_elevation
+#- from the summary there is very light left asymmetry (median less than mean)
+#- from boxplot, it confirms what said above because the median is in the middle part of the box of 1st and 3rd quartile, there are some outliers
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$position_p, main="Raw")
+qqline(raw$position_p)
+qqnorm(custom$position_p, main="Custom")
+qqline(custom$position_p)
+qqnorm(custom_elevation$position_p, main="Custom elevation")
+qqline(custom_elevation$position_p)
+par(mfrow=c(1,1))
+#From the output it can be deduced for position_p given raw, custom and custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line and also the main part of the distribution doesn't follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between raw and custom
+var.test(raw$position_p, custom$position_p, conf.level = 0.99, alternative = c("two.sided"))
+#test between custom and custom_elevation
+var.test(custom$position_p, custom_elevation$position_p, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for position_p given raw and custom
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+#also for position_p given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different in the two populations.
+#test between raw and custom
+t.test(raw$position_p, custom$position_p, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#test between custom and custom_elevation
+t.test(custom$position_p, custom_elevation$position_p, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#From the output it can be deduced for position_p given raw and custom
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+#also for position_p given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the means are equal
+
+#so the road generator influences the average pitch (also the variance).
+
+#We proceed with the analysis of how road generator influences the z acceleration
+#We study how acceleration_z varies with dataset
+summary(raw$acceleration_z)
+sd(raw$acceleration_z)
+skewness(raw$acceleration_z)
+kurtosis(raw$acceleration_z)
+summary(custom$acceleration_z)
+sd(custom$acceleration_z)
+skewness(custom$acceleration_z)
+kurtosis(custom$acceleration_z)
+summary(custom_elevation$acceleration_z)
+sd(custom_elevation$acceleration_z)
+skewness(custom_elevation$acceleration_z)
+kurtosis(custom_elevation$acceleration_z)
+par(mfrow=c(1,3))
+boxplot(raw$acceleration_z, main="Raw", horizontal=F)
+boxplot(custom$acceleration_z, main="Custom", horizontal=F)
+boxplot(custom_elevation$acceleration_z, main="Custom elevation", horizontal=F)
+par(mfrow=c(1,1))
+#From the output it can be deduced for acceleration_z given raw, custom and custom_elevation
+#- from the summary there is very light left asymmetry (median less than mean)
+#- from boxplot, it confirms what said above because the median is in the middle part of the box of 1st and 3rd quartile, there are some outliers
+
+#Then, a test is carried out on the difference in the means of two independent populations.
+#First it is checked whether the two variables have a normal distribution through the qqplots.
+par(mfrow=c(1,3))
+qqnorm(raw$acceleration_z, main="Raw")
+qqline(raw$acceleration_z)
+qqnorm(custom$acceleration_z, main="Custom")
+qqline(custom$acceleration_z)
+qqnorm(custom_elevation$acceleration_z, main="Custom elevation")
+qqline(custom_elevation$acceleration_z)
+par(mfrow=c(1,1))
+#From the output it can be deduced for acceleration_z given raw, custom and custom_elevation
+#- from the qqplot, it can be seen that the distribution in not normal due to the tails (both) which do not follow the straight line and also the main part of the distribution doesn't follow the straight line
+
+#Then, a test for equality of variances is performed. This test can be used even if the two variables are not normal as the sample size is sufficiently large.
+#test between raw and custom
+var.test(raw$acceleration_z, custom$acceleration_z, conf.level = 0.99, alternative = c("two.sided"))
+#test between custom and custom_elevation
+var.test(custom$acceleration_z, custom_elevation$acceleration_z, conf.level = 0.99, alternative = c("two.sided"))
+#From the output it can be deduced for acceleration_z given raw and custom
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+#also for acceleration_z given custom and custom_elevation
+#- from the test of equality of variances, with 99% confidence the two variances can be considered different and also the extremely low p-value (less than 2.2e-16) reinforces the decision to decisively reject the hypothesis that the variances are equal
+
+#Therefore it is possible to carry out a test on the equality of the means by imposing the condition that the variance of the populations is unknown and different in the two populations.
+#test between raw and custom
+t.test(raw$acceleration_z, custom$acceleration_z, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#test between custom and custom_elevation
+t.test(custom$acceleration_z, custom_elevation$acceleration_z, conf.level = 0.99, alternative = c("two.sided"), mu=0, var.equal = F)
+#From the output it can be deduced for acceleration_z given raw and custom
+#- from the test of equality of means, with 99% confidence the two means can be considered equal and also the high p-value (0.86) reinforces the decision to accept the hypothesis that the means are equal
+#also for acceleration_z given custom and custom_elevation
+#- from the test of equality of means, with 99% confidence the two means can be considered equal and also the high p-value (0.84) reinforces the decision to accept the hypothesis that the means are equal
+
+#so the road generator doesn't influence the average z acceleration, but it influences the variance.
+
+```
