@@ -1,0 +1,30 @@
+"0","library(dplyr)
+"
+"2","
+Caricamento pacchetto: ‘dplyr’
+
+"
+"2","I seguenti oggetti sono mascherati da ‘package:stats’:
+
+    filter, lag
+
+"
+"2","I seguenti oggetti sono mascherati da ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+"
+"0","library(moments)"
+"0","library(reticulate)"
+"0","library(ggplot2)"
+"0","library(grid)"
+"0","library(gridExtra)"
+"2","
+Caricamento pacchetto: ‘gridExtra’
+
+"
+"2","Il seguente oggetto è mascherato da ‘package:dplyr’:
+
+    combine
+
+"

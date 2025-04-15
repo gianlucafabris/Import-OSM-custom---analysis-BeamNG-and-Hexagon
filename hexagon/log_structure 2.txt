@@ -1,0 +1,11 @@
+playerId
+lightMask
+steering
+steeringWheelTorque
+accMask
+accSpeed
+batteryState
+batteryRate
+displayLightMask
+fuelGauge
+

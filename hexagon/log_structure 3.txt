@@ -1,0 +1,13 @@
+playerId
+roadId
+laneId
+flags
+roadS
+roadT
+laneOffset
+hdgRel
+pitchRel
+rollRel
+roadType
+pathS
+
