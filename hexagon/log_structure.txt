@@ -1,0 +1,25 @@
+id
+category
+type
+visMask
+name
+geometry
+	dim x / y / z
+	off x / y / z
+position
+	x/y/z
+	h/p/r
+	flags, type, system
+parent
+cfgFlags
+cfgModelId
+speed
+	x/y/z
+	h/p/r
+	flags, type, system
+acceleration
+	x/y/z
+	h/p/r
+	flags, type, system
+distance
+
